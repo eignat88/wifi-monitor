@@ -34,6 +34,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "summary_log_file": "wifi_monitor_summary.csv",
     "diagnostic_log_file": "wifi_monitor_diagnostics.csv",
     "ping_series_count": 5,
+    "write_raw_netsh": False,
+    "raw_netsh_rotation_dir": "netsh_dumps",
+    "raw_netsh_rotation_keep": 10,
 }
 
 PING_LOSS_PATTERNS = (
@@ -288,9 +291,34 @@ def parse_windows_key_value_block(raw_text: str | None) -> dict[str, str]:
     return parsed
 
 
-def collect_wifi_metrics() -> tuple[dict[str, Any], str | None]:
+def _rotate_netsh_debug_dump(content: str, rotation_dir: Path, keep: int) -> None:
+    rotation_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dump_path = rotation_dir / f"raw_netsh_{stamp}.txt"
+    dump_path.write_text(content, encoding="utf-8")
+
+    if keep <= 0:
+        return
+
+    dumps = sorted(rotation_dir.glob("raw_netsh_*.txt"), key=lambda item: item.stat().st_mtime, reverse=True)
+    for old_file in dumps[keep:]:
+        old_file.unlink(missing_ok=True)
+
+
+def collect_wifi_metrics(
+    write_raw_netsh: bool = False,
+    rotation_dir: Path | None = None,
+    rotation_keep: int = 10,
+) -> tuple[dict[str, Any], str | None]:
     ok, out, err = run_command(["netsh", "wlan", "show", "interfaces"])
-    Path("raw_netsh.txt").write_text(out or err or "", encoding="utf-8")
+    raw_payload = out or err or ""
+
+    if write_raw_netsh or not ok:
+        Path("raw_netsh.txt").write_text(raw_payload, encoding="utf-8")
+
+    if not ok and rotation_dir is not None:
+        _rotate_netsh_debug_dump(raw_payload, rotation_dir, rotation_keep)
+
     if not ok:
         return {
             "is_connected": False,
@@ -566,6 +594,9 @@ def main() -> int:
     summary_log_file = Path(str(config.get("summary_log_file", "wifi_monitor_summary.csv")))
     diagnostic_log_file = Path(str(config.get("diagnostic_log_file", "wifi_monitor_diagnostics.csv")))
     ping_series_count = int(config.get("ping_series_count", 5))
+    write_raw_netsh = bool(config.get("write_raw_netsh", False))
+    raw_netsh_rotation_dir = Path(str(config.get("raw_netsh_rotation_dir", "netsh_dumps")))
+    raw_netsh_rotation_keep = int(config.get("raw_netsh_rotation_keep", 10))
 
     if log_format not in {"csv", "jsonl"}:
         print("[WARN] Unknown log_format, falling back to csv", file=sys.stderr)
@@ -617,7 +648,11 @@ def main() -> int:
         }
 
         try:
-            wifi_metrics, wifi_error = collect_wifi_metrics()
+            wifi_metrics, wifi_error = collect_wifi_metrics(
+                write_raw_netsh=write_raw_netsh,
+                rotation_dir=raw_netsh_rotation_dir,
+                rotation_keep=raw_netsh_rotation_keep,
+            )
             row.update(wifi_metrics)
             if wifi_error:
                 row["error"] = wifi_error
