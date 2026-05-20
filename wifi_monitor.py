@@ -564,6 +564,34 @@ def load_config(path: Path | None) -> dict[str, Any]:
     return config
 
 
+def validate_config(config: dict[str, Any]) -> dict[str, Any]:
+    def _fail(field: str, value: Any) -> None:
+        raise ValueError(f"Invalid config field '{field}': {value!r}")
+
+    check_interval_sec = config.get("check_interval_sec")
+    if isinstance(check_interval_sec, bool) or not isinstance(check_interval_sec, (int, float)) or check_interval_sec <= 0:
+        _fail("check_interval_sec", check_interval_sec)
+
+    latency_threshold_ms = config.get("latency_threshold_ms")
+    if isinstance(latency_threshold_ms, bool) or not isinstance(latency_threshold_ms, int) or latency_threshold_ms < 0:
+        _fail("latency_threshold_ms", latency_threshold_ms)
+
+    failures_before_outage = config.get("failures_before_outage")
+    if isinstance(failures_before_outage, bool) or not isinstance(failures_before_outage, int) or failures_before_outage < 1:
+        _fail("failures_before_outage", failures_before_outage)
+
+    ping_targets = config.get("ping_targets")
+    if not isinstance(ping_targets, list) or not ping_targets or any(not isinstance(item, str) or not item.strip() for item in ping_targets):
+        _fail("ping_targets", ping_targets)
+
+    log_format = config.get("log_format")
+    if not isinstance(log_format, str) or log_format.lower() not in {"csv", "jsonl"}:
+        _fail("log_format", log_format)
+    config["log_format"] = log_format.lower()
+
+    return config
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Windows Wi-Fi monitor script")
     parser.add_argument("--config", type=Path, help="Path to config.json")
@@ -584,6 +612,11 @@ def main() -> int:
         config["log_file"] = str(args.log)
     if args.interval is not None:
         config["check_interval_sec"] = args.interval
+    try:
+        config = validate_config(config)
+    except ValueError as exc:
+        print(f"[ERROR] Failed to load config: {exc}", file=sys.stderr)
+        return 1
 
     interval = float(config.get("check_interval_sec", 1))
     latency_threshold_ms = int(config.get("latency_threshold_ms", 1000))
@@ -597,10 +630,6 @@ def main() -> int:
     write_raw_netsh = bool(config.get("write_raw_netsh", False))
     raw_netsh_rotation_dir = Path(str(config.get("raw_netsh_rotation_dir", "netsh_dumps")))
     raw_netsh_rotation_keep = int(config.get("raw_netsh_rotation_keep", 10))
-
-    if log_format not in {"csv", "jsonl"}:
-        print("[WARN] Unknown log_format, falling back to csv", file=sys.stderr)
-        log_format = "csv"
 
     targets = list(config.get("ping_targets", []))
     gateway = parse_default_gateway()
