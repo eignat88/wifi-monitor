@@ -21,3 +21,8 @@ projects/extension/tests/*/*.actual
 projects/extension/tests/upgrade/*.snapshot
 dist
 projects/pgai/benchmark/results
+
+raw_netsh.txt
+wifi_monitor_diagnostics.csv
+wifi_monitor_log.csv
+wifi_monitor_summary.csv
