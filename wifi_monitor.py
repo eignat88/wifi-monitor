@@ -36,6 +36,28 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "ping_series_count": 5,
 }
 
+PING_LOSS_PATTERNS = (
+    re.compile(r"\((\d+)%\s*loss\)", re.IGNORECASE),
+    re.compile(r"\((\d+)%\s*потерь\)", re.IGNORECASE),
+    re.compile(r"lost\s*=\s*\d+\s*\((\d+)%\)", re.IGNORECASE),
+    re.compile(r"потеряно\s*=\s*\d+\s*\((\d+)%\)", re.IGNORECASE),
+)
+
+PING_TIME_PATTERNS = (
+    re.compile(r"time[=<]\s*(\d+)\s*ms", re.IGNORECASE),
+    re.compile(r"time[=<]\s*(\d+)\s*мс", re.IGNORECASE),
+    re.compile(r"время[=<]\s*(\d+)\s*мс", re.IGNORECASE),
+)
+
+IPV4_PATTERNS = (
+    re.compile(r"(?:IPv4 Address|IPv4-адрес)[^:]*:\s*([\d.]+)", re.IGNORECASE),
+)
+
+DEFAULT_GATEWAY_PATTERNS = (
+    re.compile(r"default gateway[ .:]*?(\d{1,3}(?:\.\d{1,3}){3})", re.IGNORECASE),
+    re.compile(r"основной шлюз[ .:]*?(\d{1,3}(?:\.\d{1,3}){3})", re.IGNORECASE),
+)
+
 
 
 
@@ -312,8 +334,40 @@ def parse_default_gateway() -> str | None:
     ok, out, _ = run_command(["ipconfig"])
     if not ok:
         return None
-    match = re.search(r"Default Gateway[ .:]*([\d.]+)", out)
-    return match.group(1) if match else None
+    return parse_default_gateway_from_text(out)
+
+
+def parse_default_gateway_from_text(output: str) -> str | None:
+    lines = output.splitlines()
+    for idx, line in enumerate(lines):
+        for pattern in DEFAULT_GATEWAY_PATTERNS:
+            match = pattern.search(line)
+            if match:
+                return match.group(1)
+
+            normalized = line.strip().lower()
+            if ("default gateway" in normalized or "основной шлюз" in normalized) and idx + 1 < len(lines):
+                next_line = lines[idx + 1].strip()
+                ip_match = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", next_line)
+                if ip_match:
+                    return ip_match.group(1)
+    return None
+
+
+def parse_ping_loss_from_text(output: str) -> int | None:
+    for pattern in PING_LOSS_PATTERNS:
+        match = pattern.search(output)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def parse_ping_time_from_text(output: str) -> int | None:
+    for pattern in PING_TIME_PATTERNS:
+        match = pattern.search(output)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def ping_target(target: str) -> dict[str, Any]:
@@ -327,15 +381,15 @@ def ping_target(target: str) -> dict[str, Any]:
             "error": f"ping_error: {err or 'unknown error'}",
         }
 
-    loss_match = re.search(r"\((\d+)% loss\)", out)
-    time_match = re.search(r"time[=<](\d+)ms", out)
+    packet_loss = parse_ping_loss_from_text(out)
+    latency_ms = parse_ping_time_from_text(out)
     success = "TTL=" in out.upper() and "unreachable" not in out.lower()
 
     return {
         "target": target,
         "ping_status": "OK" if success else "FAIL",
-        "latency_ms": int(time_match.group(1)) if time_match else "",
-        "packet_loss_percent": int(loss_match.group(1)) if loss_match else "",
+        "latency_ms": latency_ms if latency_ms is not None else "",
+        "packet_loss_percent": packet_loss if packet_loss is not None else "",
         "error": "" if success else (err.strip() or "ping_failed"),
     }
 
@@ -577,7 +631,12 @@ def main() -> int:
             internet_ok = row["ping_status"] == "OK"
             row["is_internet_available"] = internet_ok
             ok_ip, ip_out, _ = run_command(["ipconfig"])
-            ipv4 = re.search(r"(?:IPv4 Address|IPv4-адрес)[^:]*:\s*([\d.]+)", ip_out) if ok_ip else None
+            ipv4 = None
+            if ok_ip:
+                for pattern in IPV4_PATTERNS:
+                    ipv4 = pattern.search(ip_out)
+                    if ipv4:
+                        break
             row["ip_address"] = ipv4.group(1) if ipv4 else ""
             st = str(row.get("state_raw", "")).lower()
             row["is_connected"] = st in {"connected", "подключено"} or (bool(row["ssid"]) and bool(row["bssid"]) and bool(row["ip_address"])) or (bool(row["ssid"]) and bool(row["bssid"]) and row["ping_status"] == "OK")
