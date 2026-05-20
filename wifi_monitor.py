@@ -456,11 +456,6 @@ def detect_event(state: MonitorState, row: dict[str, Any], failures_before_outag
         state.outage_active = False
         events.append("OUTAGE_ENDED")
 
-    state.previous_connected = connected
-    state.previous_ssid = str(row["ssid"] or "")
-    state.previous_bssid = str(row["bssid"] or "")
-    state.previous_internet = internet
-
     return "|".join(events)
 
 
@@ -628,6 +623,11 @@ def main() -> int:
             }
             diag_row["classification"] = classify_network_issue(row, diag_row)
             diagnostics_logger.log(diag_row)
+
+            state.previous_connected = bool(row.get("is_connected"))
+            state.previous_ssid = str(row.get("ssid", "") or "")
+            state.previous_bssid = str(row.get("bssid", "") or "")
+            state.previous_internet = bool(row.get("is_internet_available"))
             state.previous_channel = str(row.get("channel", "") or "")
 
         except Exception as exc:  # noqa: BLE001
