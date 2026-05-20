@@ -201,8 +201,12 @@ def run_command(command: list[str], timeout: int = 5) -> tuple[bool, str, str]:
         stdout = _decode_output(result.stdout)
         stderr = _decode_output(result.stderr)
         return result.returncode == 0, stdout, stderr
-    except Exception as exc:  # noqa: BLE001
-        return False, "", str(exc)
+    except subprocess.TimeoutExpired as exc:
+        cmd_str = " ".join(command)
+        return False, "", f"command_timeout command='{cmd_str}' timeout={timeout}s error={exc}"
+    except FileNotFoundError as exc:
+        cmd_str = " ".join(command)
+        return False, "", f"command_not_found command='{cmd_str}' timeout={timeout}s error={exc}"
 
 
 
@@ -376,9 +380,14 @@ def resolve_dns(hostname: str = "google.com") -> dict[str, Any]:
         resolved_ip = socket.gethostbyname(hostname)
         elapsed_ms = round((time.time() - started) * 1000)
         return {"dns_status": "OK", "dns_resolution_ms": elapsed_ms, "resolved_ip": resolved_ip}
-    except Exception as exc:  # noqa: BLE001
+    except socket.gaierror as exc:
         elapsed_ms = round((time.time() - started) * 1000)
-        return {"dns_status": "FAIL", "dns_resolution_ms": elapsed_ms, "resolved_ip": "", "dns_error": str(exc)}
+        return {
+            "dns_status": "FAIL",
+            "dns_resolution_ms": elapsed_ms,
+            "resolved_ip": "",
+            "dns_error": f"dns_resolution_failed hostname='{hostname}' error={exc}",
+        }
 
 
 def classify_network_issue(row: dict[str, Any], diag: dict[str, Any]) -> str:
@@ -634,7 +643,7 @@ def main() -> int:
             state.consecutive_failures += 1
             row["error_count"] = state.consecutive_failures
             row["event"] = "MONITOR_ERROR"
-            row["error"] = f"monitor_loop_error: {exc}"
+            row["error"] = f"monitor_loop_error type={type(exc).__name__} target={row.get('target', '')} error={exc}"
 
         logger.log(row)
         summary_stats.add_row(row)
