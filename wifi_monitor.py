@@ -47,9 +47,9 @@ PING_LOSS_PATTERNS = (
 )
 
 PING_TIME_PATTERNS = (
-    re.compile(r"time[=<]\s*(\d+)\s*ms", re.IGNORECASE),
-    re.compile(r"time[=<]\s*(\d+)\s*мс", re.IGNORECASE),
-    re.compile(r"время[=<]\s*(\d+)\s*мс", re.IGNORECASE),
+    re.compile(r"time\s*[=<]\s*(\d+)\s*ms", re.IGNORECASE),
+    re.compile(r"time\s*[=<]\s*(\d+)\s*мс", re.IGNORECASE),
+    re.compile(r"время\s*[=<]\s*(\d+)\s*мс", re.IGNORECASE),
 )
 
 IPV4_PATTERNS = (
@@ -175,8 +175,8 @@ class SummaryStats:
 
     def add_row(self, row: dict[str, Any]) -> None:
         self.samples += 1
-        latency = row.get("latency_ms")
-        if isinstance(latency, int):
+        latency = self._normalize_latency(row.get("latency_ms"))
+        if latency is not None:
             self.ping_values.append(latency)
         if row.get("ping_status") != "OK":
             self.ping_fail_samples += 1
@@ -187,6 +187,17 @@ class SummaryStats:
 
         if not row.get("is_connected"):
             self.disconnect_samples += 1
+
+
+    @staticmethod
+    def _normalize_latency(value: Any) -> int | None:
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.isdigit():
+                return int(stripped)
+        return None
 
     def to_summary_rows(self, timestamp: str) -> list[dict[str, Any]]:
         avg_ping = round(sum(self.ping_values) / len(self.ping_values)) if self.ping_values else ""
@@ -411,7 +422,10 @@ def ping_target(target: str) -> dict[str, Any]:
 
     packet_loss = parse_ping_loss_from_text(out)
     latency_ms = parse_ping_time_from_text(out)
-    success = "TTL=" in out.upper() and "unreachable" not in out.lower()
+    lowered_out = out.lower()
+    has_unreachable = any(marker in lowered_out for marker in ("unreachable", "недоступен", "превышен интервал ожидания"))
+    success = (packet_loss == 0 if isinstance(packet_loss, int) else False) or (latency_ms is not None)
+    success = success and not has_unreachable
 
     return {
         "target": target,
