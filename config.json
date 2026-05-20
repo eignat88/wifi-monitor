@@ -4,5 +4,12 @@
   "latency_threshold_ms": 1000,
   "failures_before_outage": 3,
   "log_format": "csv",
-  "log_file": "wifi_monitor_log.csv"
+  "log_file": "wifi_monitor_log.csv",
+  "summary_interval_sec": 300,
+  "summary_log_file": "wifi_monitor_summary.csv",
+  "diagnostic_log_file": "wifi_monitor_diagnostics.csv",
+  "ping_series_count": 5,
+  "write_raw_netsh": false,
+  "raw_netsh_rotation_dir": "netsh_dumps",
+  "raw_netsh_rotation_keep": 10
 }
